@@ -6,13 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.middleware.logging import RequestLoggingMiddleware
+from app.processing.worker import worker as processing_worker
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Startup ──────────────────────────────────────────────────────────────
+    await processing_worker.start()
     yield
+    # ── Shutdown ─────────────────────────────────────────────────────────────
+    await processing_worker.stop()
 
 
 def create_app() -> FastAPI:
@@ -21,7 +26,7 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         description=(
             "ChronoLegal API — Legal Question Answering and Case Analytics platform. "
-            "Phase 1: Architecture foundation with mock responses."
+            "Phase 5.1: Background Processing Infrastructure."
         ),
         docs_url="/docs",
         redoc_url="/redoc",

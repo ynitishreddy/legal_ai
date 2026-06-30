@@ -83,6 +83,54 @@ class ChatRole(str, enum.Enum):
     SYSTEM = "system"
 
 
+# ---------------------------------------------------------------------------
+# Phase 5.1 — Background Processing Enums
+# ---------------------------------------------------------------------------
+
+class JobStatus(str, enum.Enum):
+    """State machine for processing jobs."""
+    PENDING = "pending"
+    QUEUED = "queued"
+    STARTING = "starting"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class JobType(str, enum.Enum):
+    """Supported processing job types. Only identifiers — no implementation yet."""
+    OCR = "ocr"
+    TEXT_EXTRACTION = "text_extraction"
+    CLEANING = "cleaning"
+    CHUNKING = "chunking"
+    EMBEDDINGS = "embeddings"
+    TIMELINE = "timeline"
+    SUMMARY = "summary"
+    ANALYTICS = "analytics"
+
+
+class JobPriority(str, enum.Enum):
+    """Job scheduling priority."""
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class JobLogEventType(str, enum.Enum):
+    """Event categories for processing job logs."""
+    CREATED = "created"
+    QUEUED = "queued"
+    STARTED = "started"
+    PROGRESS = "progress"
+    RETRY = "retry"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INFO = "info"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -109,6 +157,9 @@ class User(Base):
     )
     analytics_records: Mapped[list["AnalyticsRecord"]] = relationship(
         "AnalyticsRecord", back_populates="user", cascade="all, delete-orphan"
+    )
+    processing_jobs: Mapped[list["ProcessingJob"]] = relationship(
+        "ProcessingJob", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -208,6 +259,15 @@ class Document(Base):
     timeline_events: Mapped[list["TimelineEvent"]] = relationship(
         "TimelineEvent", back_populates="document"
     )
+    processing_jobs: Mapped[list["ProcessingJob"]] = relationship(
+        "ProcessingJob", back_populates="document", cascade="all, delete-orphan"
+    )
+    extracted_text: Mapped["DocumentText | None"] = relationship(
+        "DocumentText", back_populates="document", uselist=False, cascade="all, delete-orphan"
+    )
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        "DocumentChunk", back_populates="document", cascade="all, delete-orphan"
+    )
 
 
 class TimelineEvent(Base):
@@ -293,3 +353,123 @@ class AnalyticsRecord(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="analytics_records")
     case: Mapped["Case | None"] = relationship("Case", back_populates="analytics_records")
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.1 — Processing Job Models
+# ---------------------------------------------------------------------------
+
+class ProcessingJob(Base):
+    """
+    Represents a background processing task for a document.
+
+    Lifecycle: PENDING → QUEUED → STARTING → RUNNING → COMPLETED | FAILED | CANCELLED
+    Supports retries up to max_retries.
+    """
+    __tablename__ = "processing_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Classification
+    job_type: Mapped[JobType] = mapped_column(
+        Enum(JobType, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, values_callable=lambda e: [m.value for m in e]),
+        default=JobStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    priority: Mapped[JobPriority] = mapped_column(
+        Enum(JobPriority, values_callable=lambda e: [m.value for m in e]),
+        default=JobPriority.NORMAL,
+        nullable=False,
+    )
+
+    # Progress tracking
+    progress_percentage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_step: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Retry support
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    last_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Error information
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # stack trace / detail
+
+    # Timestamps
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="processing_jobs")
+    document: Mapped["Document"] = relationship("Document", back_populates="processing_jobs")
+    case: Mapped["Case | None"] = relationship("Case")
+    logs: Mapped[list["ProcessingJobLog"]] = relationship(
+        "ProcessingJobLog",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="ProcessingJobLog.created_at",
+    )
+
+
+class ProcessingJobLog(Base):
+    """
+    Chronological event log for a processing job.
+
+    Each row represents one event in the job lifecycle.
+    """
+    __tablename__ = "processing_job_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("processing_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[JobLogEventType] = mapped_column(
+        Enum(JobLogEventType, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+    job: Mapped["ProcessingJob"] = relationship("ProcessingJob", back_populates="logs")
+
+
+# Phase 5.2 — Extracted document texts
+from app.document_processing.models import DocumentText, DocumentChunk

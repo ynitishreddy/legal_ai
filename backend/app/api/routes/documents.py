@@ -827,3 +827,63 @@ async def get_document_thumbnail(
             "Cache-Control": "private, max-age=86400",
         }
     )
+
+
+# ── Phase 5.2 — Extraction Endpoints ──────────────────────────────────────────
+
+from app.document_processing.schemas import (
+    DocumentTextResponse,
+    DocumentMetadataResponse,
+    DocumentTextPreviewResponse,
+)
+
+@router.get("/{document_id}/text", response_model=DocumentTextResponse, summary="Get document extracted text")
+async def get_document_text_endpoint(
+    document_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> DocumentTextResponse:
+    from app.document_processing.service import get_document_processing_service
+    service = get_document_processing_service(db)
+    doc_text = service.get_document_text(document_id=document_id, user_id=current_user.id)
+    return DocumentTextResponse.model_validate(doc_text)
+
+
+@router.get("/{document_id}/metadata", response_model=DocumentMetadataResponse, summary="Get document extraction metadata")
+async def get_document_metadata_endpoint(
+    document_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> DocumentMetadataResponse:
+    from app.document_processing.service import get_document_processing_service
+    service = get_document_processing_service(db)
+    doc_text = service.get_document_text(document_id=document_id, user_id=current_user.id)
+    return DocumentMetadataResponse(
+        document_id=doc_text.document_id,
+        metadata=doc_text.metadata_json or {},
+        warnings=doc_text.warnings_json or []
+    )
+
+
+@router.get("/{document_id}/preview-text", response_model=DocumentTextPreviewResponse, summary="Get document text preview")
+async def get_document_preview_text_endpoint(
+    document_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> DocumentTextPreviewResponse:
+    from app.document_processing.service import get_document_processing_service
+    service = get_document_processing_service(db)
+    doc_text = service.get_document_text(document_id=document_id, user_id=current_user.id)
+    
+    # Return first 1000 characters
+    preview = doc_text.extracted_text[:1000]
+    
+    return DocumentTextPreviewResponse(
+        document_id=doc_text.document_id,
+        preview_text=preview,
+        page_count=doc_text.page_count,
+        confidence_score=doc_text.confidence_score,
+        has_ocr=doc_text.has_ocr,
+        extraction_method=doc_text.extraction_method,
+        created_at=doc_text.created_at
+    )

@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     upload_directory: str = "uploads"
     max_upload_size: int = 10 * 1024 * 1024  # 10MB default
     allowed_file_types: str = "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg,image/jpg"
+
+    # Phase 5.2 — OCR configuration
+    tesseract_cmd: Optional[str] = None
 
     @property
     def cors_origins_list(self) -> List[str]:

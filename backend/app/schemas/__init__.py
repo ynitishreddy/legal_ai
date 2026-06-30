@@ -83,6 +83,11 @@ class DashboardStatsResponse(BaseModel):
     closedCases: int = 0
     archivedCases: int = 0
     timelineEvents: int = 0
+    # Phase 5.1 — Processing stats
+    processingQueued: int = 0
+    processingRunning: int = 0
+    processingCompletedToday: int = 0
+    processingFailed: int = 0
 
 
 # ── Cases ─────────────────────────────────────────────────────────────────────
@@ -344,3 +349,110 @@ class BulkMoveResponse(BaseModel):
     moved_count: int
     skipped_count: int
     failures: List[str]
+
+
+# ── Processing Jobs (Phase 5.1) ───────────────────────────────────────────────
+
+class ProcessingJobCreateRequest(BaseModel):
+    """Request body for creating a new processing job."""
+    document_id: UUID
+    job_type: str = Field(..., description="One of: ocr, text_extraction, cleaning, chunking, embeddings, timeline, summary, analytics")
+    priority: str = Field("normal", description="One of: low, normal, high, urgent")
+    max_retries: int = Field(3, ge=0, le=10)
+
+    @field_validator("job_type")
+    @classmethod
+    def validate_job_type(cls, v: str) -> str:
+        valid = {"ocr", "text_extraction", "cleaning", "chunking", "embeddings", "timeline", "summary", "analytics"}
+        if v not in valid:
+            raise ValueError(f"job_type must be one of: {', '.join(sorted(valid))}")
+        return v
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: str) -> str:
+        valid = {"low", "normal", "high", "urgent"}
+        if v not in valid:
+            raise ValueError(f"priority must be one of: {', '.join(sorted(valid))}")
+        return v
+
+
+class ProcessingJobLogResponse(BaseSchema):
+    """A single log entry for a processing job."""
+    id: UUID
+    job_id: UUID
+    event_type: str
+    message: str
+    metadata_json: Optional[str] = None
+    created_at: datetime
+
+
+class ProcessingJobResponse(BaseSchema):
+    """Summary response for a processing job (used in list views)."""
+    id: UUID
+    user_id: UUID
+    document_id: UUID
+    case_id: Optional[UUID] = None
+    job_type: str
+    status: str
+    priority: str
+    progress_percentage: int
+    current_step: Optional[str] = None
+    retry_count: int
+    max_retries: int
+    last_retry_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @property
+    def can_retry(self) -> bool:
+        return self.status == "failed" and self.retry_count < self.max_retries
+
+    @property
+    def can_cancel(self) -> bool:
+        return self.status in {"pending", "queued", "starting", "running"}
+
+
+class ProcessingJobDetailResponse(ProcessingJobResponse):
+    """Full response for a processing job including logs."""
+    logs: List[ProcessingJobLogResponse] = []
+    error_detail: Optional[str] = None
+
+
+class ProcessingJobListResponse(BaseModel):
+    """Paginated list of processing jobs."""
+    items: List[ProcessingJobResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class ProcessingStatsResponse(BaseModel):
+    """Summary statistics for the processing system."""
+    pending: int = 0
+    queued: int = 0
+    running: int = 0
+    completed: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    completed_today: int = 0
+    average_duration_seconds: Optional[float] = None
+
+
+from app.schemas.processing_dashboard import (
+    ProcessingQueueHealthResponse,
+    ProcessingLogItem,
+    ProcessingLogsListResponse,
+    ProcessingPerformanceResponse,
+    JobTimelineEvent,
+    JobTimelineResponse,
+    JobWarningsResponse,
+    JobMetricsResponse,
+    ProcessingDashboardStatsResponse,
+)
+
+

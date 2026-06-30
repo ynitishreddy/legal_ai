@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import analytics, auth, cases, chat, dashboard, documents, timeline, users
+from app.api.routes import analytics, auth, cases, chat, dashboard, documents, processing, timeline, users, document_cleaning, document_chunking
 
 api_router = APIRouter(prefix="/api")
 
@@ -12,3 +12,8 @@ api_router.include_router(chat.router)
 api_router.include_router(timeline.router)
 api_router.include_router(analytics.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(processing.router)
+api_router.include_router(document_cleaning.router)
+api_router.include_router(document_chunking.router)
+
+
