@@ -200,6 +200,9 @@ class ProcessingWorker:
         if job.job_type == JobType.VECTOR_SYNC:
             await self._run_vector_sync_pipeline(service, job)
             return
+        if job.job_type == JobType.TIMELINE:
+            await self._run_timeline_pipeline(service, job)
+            return
 
 
         worker_execution_start_time = time.time()
@@ -567,6 +570,23 @@ class ProcessingWorker:
                 worker_execution_time=worker_execution_time,
             )
 
+            # Auto-trigger timeline extraction job after vector sync completes successfully
+            try:
+                from app.models import Document
+                doc = db.get(Document, job.document_id)
+                if doc and doc.case_id:
+                    logger.info("ProcessingWorker: Auto-triggering timeline extraction job for document %s", job.document_id)
+                    from app.processing.service import get_processing_service
+                    proc_service = get_processing_service(db)
+                    await proc_service.create_job(
+                        user_id=job.user_id,
+                        document_id=job.document_id,
+                        job_type="timeline",
+                        priority=job.priority.value if hasattr(job.priority, "value") else str(job.priority),
+                    )
+            except Exception as e:
+                logger.error("ProcessingWorker: Failed to auto-trigger timeline extraction job: %s", str(e))
+
             logger.info("ProcessingWorker: Vector sync job %s completed successfully", job_id)
 
         except Exception as exc:
@@ -604,6 +624,98 @@ class ProcessingWorker:
         db.commit()
 
 
+
+
+# ---------------------------------------------------------------------------
+    async def _run_timeline_pipeline(self, service: ProcessingService, job: ProcessingJob) -> None:
+        """Extracts and persists timeline events from document chunks."""
+        job_id = job.id
+        db = service.db
+        worker_execution_start_time = time.time()
+        created_timestamp = job.created_at.timestamp()
+        queue_wait_time = max(0.0, worker_execution_start_time - created_timestamp)
+
+        try:
+            # 1. Transition PENDING/QUEUED → STARTING
+            service.mark_starting(job_id)
+            await asyncio.sleep(0.1)
+
+            # 2. Transition STARTING → RUNNING
+            service.mark_running(job_id)
+
+            # 3. Fetch Case association
+            from app.models import Document
+            doc = db.get(Document, job.document_id)
+            if not doc:
+                raise ValueError(f"Associated document record {job.document_id} not found")
+            if not doc.case_id:
+                raise ValueError(f"Document {job.document_id} is not scoped to a case case_id")
+
+            # 4. Progress step
+            service.update_progress(job_id, percentage=30, current_step="Analyzing Chunks Context")
+
+            from app.services.timeline import TimelineIntelligenceService
+            timeline_svc = TimelineIntelligenceService(db)
+            
+            loop = asyncio.get_running_loop()
+            service.update_progress(job_id, percentage=60, current_step="Extracting Legal Event Dates")
+            
+            await loop.run_in_executor(
+                None,
+                timeline_svc.extract_document_events,
+                doc.case_id,
+                job.document_id,
+            )
+
+            service.update_progress(job_id, percentage=95, current_step="Merging & Linking Related Events")
+
+            # 5. Transition RUNNING → COMPLETED
+            service.mark_completed(job_id)
+            worker_execution_time = time.time() - worker_execution_start_time
+            
+            # Save metrics
+            self._save_timeline_performance_metrics(
+                db=db,
+                job=job,
+                queue_wait_time=queue_wait_time,
+                worker_execution_time=worker_execution_time,
+            )
+
+            logger.info("ProcessingWorker: Timeline extraction job %s completed successfully", job_id)
+
+        except Exception as exc:
+            logger.error("ProcessingWorker: Timeline extraction job %s failed: %s", job_id, str(exc), exc_info=True)
+            raise exc
+
+    def _save_timeline_performance_metrics(
+        self,
+        db: Session,
+        job: ProcessingJob,
+        queue_wait_time: float,
+        worker_execution_time: float,
+    ):
+        from app.models import AnalyticsRecord
+        metrics = {
+            "queue_wait_time": queue_wait_time,
+            "worker_execution_time": worker_execution_time,
+            "total_processing_duration": queue_wait_time + worker_execution_time,
+        }
+        for key, val in metrics.items():
+            record = AnalyticsRecord(
+                metric_name=key,
+                metric_value=float(val),
+                metric_unit="seconds",
+                category="timeline_extraction",
+                user_id=job.user_id,
+                case_id=job.case_id,
+                metadata_json=json.dumps({
+                    "job_id": str(job.id),
+                    "document_id": str(job.document_id),
+                    "job_type": job.job_type.value,
+                })
+            )
+            db.add(record)
+        db.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -485,4 +485,37 @@ from app.schemas.retrieval import (
     ChunkPreviewRequest,
 )
 
+from app.schemas.chat import (
+    ChatMessageRequest,
+    ChatMessageResponse,
+    ChatSessionResponse,
+    ChatQueryResponse,
+    ChatHistoryResponse,
+    LLMProviderResponse,
+    LLMModelResponse,
+    RAGStatsResponse,
+    LLMHealthResponse,
+    QueryRewriteRequest,
+    QueryRewriteResponse,
+    FollowupRequest,
+    FollowupResponse,
+    ContextCompressRequest,
+    ContextCompressResponse,
+    ProviderSelectRequest,
+    ProviderSelectResponse,
+    PromptTemplateCreate,
+    PromptTemplateResponse,
+    ConversationMemoryResponse,
+    ConversationAnalyticsResponse,
+    GuardrailConfigResponse,
+)
+
+from app.schemas.timeline import (
+    TimelineExtractionRequest,
+    TimelineRebuildRequest,
+    LegalEventResponse,
+    EventRelationshipResponse,
+    TimelineStatsResponse,
+)
+
 

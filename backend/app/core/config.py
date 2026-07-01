@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     qdrant_upload_timeout: int = 60
     qdrant_max_retries: int = 3
 
+    # Phase 7.1 — LLM & RAG configuration
+    default_llm_provider: str = "mock"  # openai, gemini, ollama, mock
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4"
+    gemini_api_key: Optional[str] = None
+    gemini_model: str = "gemini-1.5-pro"
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3"
+
+
 
     @property
     def cors_origins_list(self) -> List[str]:
