@@ -203,6 +203,9 @@ class ProcessingWorker:
         if job.job_type == JobType.TIMELINE:
             await self._run_timeline_pipeline(service, job)
             return
+        if job.job_type == JobType.CASE_INTELLIGENCE:
+            await self._run_case_intelligence_pipeline(service, job)
+            return
 
 
         worker_execution_start_time = time.time()
@@ -683,9 +686,80 @@ class ProcessingWorker:
 
             logger.info("ProcessingWorker: Timeline extraction job %s completed successfully", job_id)
 
+            # Auto trigger case intelligence pipeline
+            from app.processing.queue import processing_queue
+            await processing_queue.enqueue_job(
+                document_id=job.document_id,
+                job_type=JobType.CASE_INTELLIGENCE,
+                user_id=job.user_id,
+                case_id=doc.case_id,
+                priority=job.priority,
+            )
+
         except Exception as exc:
             logger.error("ProcessingWorker: Timeline extraction job %s failed: %s", job_id, str(exc), exc_info=True)
             raise exc
+
+    async def _run_case_intelligence_pipeline(self, service: ProcessingService, job: ProcessingJob) -> None:
+        """Extracts and resolves case entities, facts, and knowledge graphs from chunks."""
+        job_id = job.id
+        db = service.db
+        worker_execution_start_time = time.time()
+        created_timestamp = job.created_at.timestamp()
+        queue_wait_time = max(0.0, worker_execution_start_time - created_timestamp)
+
+        try:
+            # 1. Transition PENDING/QUEUED → STARTING
+            service.mark_starting(job_id)
+            await asyncio.sleep(0.1)
+
+            # 2. Transition STARTING → RUNNING
+            service.mark_running(job_id)
+
+            # 3. Retrieve core Document details
+            from app.models import Document
+            doc = db.get(Document, job.document_id)
+            if not doc:
+                raise ValueError(f"Associated document record {job.document_id} not found")
+            if not doc.case_id:
+                raise ValueError(f"Document {job.document_id} is not scoped to a case case_id")
+
+            # 4. Progress step
+            service.update_progress(job_id, percentage=30, current_step="Extracting Legal Entities & Facts")
+
+            from app.services.case_intelligence.service import CaseIntelligenceService
+            intelligence_svc = CaseIntelligenceService(db)
+
+            loop = asyncio.get_running_loop()
+            service.update_progress(job_id, percentage=60, current_step="Running Cross-document Entity Resolution")
+
+            await loop.run_in_executor(
+                None,
+                intelligence_svc.extract_case_knowledge,
+                doc.case_id,
+                job.document_id,
+            )
+
+            service.update_progress(job_id, percentage=95, current_step="Structuring Knowledge Graph Relational Edges")
+
+            # 5. Transition RUNNING → COMPLETED
+            service.mark_completed(job_id)
+            worker_execution_time = time.time() - worker_execution_start_time
+            
+            # Save metrics using timeline metrics helper for simplicity
+            self._save_timeline_performance_metrics(
+                db=db,
+                job=job,
+                queue_wait_time=queue_wait_time,
+                worker_execution_time=worker_execution_time,
+            )
+
+            logger.info("ProcessingWorker: Case intelligence job %s completed successfully", job_id)
+
+        except Exception as exc:
+            logger.error("ProcessingWorker: Case intelligence job %s failed: %s", job_id, str(exc), exc_info=True)
+            raise exc
+
 
     def _save_timeline_performance_metrics(
         self,

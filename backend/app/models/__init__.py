@@ -107,6 +107,7 @@ class JobType(str, enum.Enum):
     EMBEDDINGS = "embeddings"
     VECTOR_SYNC = "vector_sync"
     TIMELINE = "timeline"
+    CASE_INTELLIGENCE = "case_intelligence"
     SUMMARY = "summary"
     ANALYTICS = "analytics"
 
@@ -528,5 +529,166 @@ from app.models.embeddings import DocumentEmbedding, EmbeddingJob, VectorSyncJob
 
 # Phase 6.3 — Retrieval Models
 from app.models.retrieval import RetrievalLog
+
+
+# Phase 8.2 — Case Intelligence Models
+class LegalFact(Base):
+    __tablename__ = "legal_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    chunk_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fact_text: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    citation_source: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    extraction_method: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    
+    # Extensions for Phase 8.2 (v1.5.1)
+    category: Mapped[str] = mapped_column(String(50), default="Factual Findings", server_default="Factual Findings", nullable=False)
+    importance_score: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5", nullable=False)
+    processing_version: Mapped[str] = mapped_column(String(20), default="1.0.0", server_default="1.0.0", nullable=False)
+    supporting_citations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
+
+class LegalEntity(Base):
+    __tablename__ = "legal_entities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True) # party, judge, court, advocate, witness
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    aliases: Mapped[str | None] = mapped_column(String(500), nullable=True) # comma-separated
+    role: Mapped[str | None] = mapped_column(String(100), nullable=True) # e.g. plaintiff, counsel, etc.
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Extensions for Phase 8.2 (v1.5.1)
+    canonical_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("legal_entities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    resolution_status: Mapped[str] = mapped_column(String(50), default="unresolved", server_default="unresolved", nullable=False)
+    similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    merge_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
+
+class LegalIssue(Base):
+    __tablename__ = "legal_issues"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    issue_text: Mapped[str] = mapped_column(Text, nullable=False)
+    issue_category: Mapped[str] = mapped_column(String(50), nullable=False) # civil, criminal, constitutional, procedural
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Extensions for Phase 8.2 (v1.5.1)
+    labels: Mapped[str | None] = mapped_column(Text, nullable=True)  # Comma-separated labels
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
+
+class ClaimDefense(Base):
+    __tablename__ = "claims_defenses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False, index=True) # claim_primary, claim_alternative, claim_counter, claim_cross, etc.
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Extensions for Phase 8.2 (v1.5.1)
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
+
+class LegalEvidence(Base):
+    __tablename__ = "legal_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    evidence_type: Mapped[str] = mapped_column(String(50), nullable=False) # exhibit, witness_testimony, electronic, forensic
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Extensions for Phase 8.2 (v1.5.1)
+    strength_score: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5", nullable=False)
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
+
+class ActStatute(Base):
+    __tablename__ = "acts_statutes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    act_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    section_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    normalized_reference: Mapped[str] = mapped_column(String(255), nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Extensions for Phase 8.2 (v1.5.1)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("acts_statutes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    aliases: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
+
+class EntityRelationship(Base):
+    __tablename__ = "entity_relationships"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False) # entity, claim, evidence, fact, act
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False) # entity, claim, evidence, fact, act
+    relationship_type: Mapped[str] = mapped_column(String(100), nullable=False) # represented_by, issued, supports, disputed_by, referenced_in
+    confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Extensions for Phase 8.2 (v1.5.1)
+    reasoning_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    source_doc_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
 
 

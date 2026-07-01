@@ -518,4 +518,17 @@ from app.schemas.timeline import (
     TimelineStatsResponse,
 )
 
+from app.schemas.intelligence import (
+    LegalFactResponse,
+    LegalEntityResponse,
+    LegalIssueResponse,
+    ClaimDefenseResponse,
+    LegalEvidenceResponse,
+    ActStatuteResponse,
+    KnowledgeGraphResponse,
+    CaseIntelligenceStatsResponse,
+    ExtractionTriggerRequest,
+)
+
+
 
