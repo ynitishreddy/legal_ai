@@ -708,5 +708,10 @@ class AnalyticsSnapshot(Base):
     case: Mapped["Case | None"] = relationship("Case")
 
 
+# Phase 10 — Summarization Models
+from app.models.summary import Summary, SummaryVersion, SummaryCitation, SummaryCache, SummaryGenerationJob
+
+
+
 
 

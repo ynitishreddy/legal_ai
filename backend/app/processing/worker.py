@@ -763,6 +763,23 @@ class ProcessingWorker:
 
             logger.info("ProcessingWorker: Case intelligence job %s completed successfully", job_id)
 
+            # Auto trigger case summaries generation
+            try:
+                from app.services.summary import SummaryService
+                summary_svc = SummaryService(db)
+                for stype in ["executive", "chronological", "legal"]:
+                    await loop.run_in_executor(
+                        None,
+                        summary_svc.generate_summary,
+                        doc.case_id,
+                        stype,
+                        "mock",
+                        "mock-model",
+                        True  # Force regeneration since intelligence indices updated
+                    )
+            except Exception as se:
+                logger.error("ProcessingWorker: failed to auto-generate case summaries: %s", se)
+
         except Exception as exc:
             logger.error("ProcessingWorker: Case intelligence job %s failed: %s", job_id, str(exc), exc_info=True)
             raise exc
