@@ -105,6 +105,7 @@ class JobType(str, enum.Enum):
     CLEANING = "cleaning"
     CHUNKING = "chunking"
     EMBEDDINGS = "embeddings"
+    VECTOR_SYNC = "vector_sync"
     TIMELINE = "timeline"
     SUMMARY = "summary"
     ANALYTICS = "analytics"
@@ -473,3 +474,11 @@ class ProcessingJobLog(Base):
 
 # Phase 5.2 — Extracted document texts
 from app.document_processing.models import DocumentText, DocumentChunk
+
+# Phase 6.1 — Embedding Models
+from app.models.embeddings import DocumentEmbedding, EmbeddingJob, VectorSyncJob
+
+# Phase 6.3 — Retrieval Models
+from app.models.retrieval import RetrievalLog
+
+

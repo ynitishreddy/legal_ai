@@ -193,6 +193,15 @@ class ProcessingWorker:
         job_id = job.id
         db = service.db
 
+        from app.models import JobType
+        if job.job_type == JobType.EMBEDDINGS:
+            await self._run_embedding_pipeline(service, job)
+            return
+        if job.job_type == JobType.VECTOR_SYNC:
+            await self._run_vector_sync_pipeline(service, job)
+            return
+
+
         worker_execution_start_time = time.time()
         created_timestamp = job.created_at.timestamp()
         queue_wait_time = max(0.0, worker_execution_start_time - created_timestamp)
@@ -304,6 +313,20 @@ class ProcessingWorker:
 
             # 10. Complete job
             service.mark_completed(job_id)
+
+            # Auto-trigger embedding job after chunking completes
+            try:
+                logger.info("ProcessingWorker: Auto-triggering embedding job for document %s", job.document_id)
+                from app.services.embeddings import DocumentEmbeddingService
+                emb_db_svc = DocumentEmbeddingService(db)
+                await emb_db_svc.create_embedding_job(
+                    user_id=job.user_id,
+                    document_id=job.document_id,
+                    priority=job.priority.value if hasattr(job.priority, "value") else str(job.priority),
+                )
+            except Exception as e:
+                logger.error("ProcessingWorker: Failed to auto-trigger embedding job for document %s: %s", job.document_id, str(e))
+
             
             worker_execution_time = time.time() - worker_execution_start_time
             db_save_duration = save_extraction_duration + save_cleaning_duration + save_chunking_duration
@@ -334,6 +357,253 @@ class ProcessingWorker:
             logger.error("ProcessingWorker: Job=%s failed with exception: %s", job_id, exc, exc_info=True)
             # Bubble up to handle automatic retry logic in caller
             raise exc
+
+    async def _run_embedding_pipeline(self, service: ProcessingService, job: ProcessingJob) -> None:
+        """Runs embedding inference in batches and persists the vectors."""
+        import math
+        job_id = job.id
+        db = service.db
+        worker_execution_start_time = time.time()
+        created_timestamp = job.created_at.timestamp()
+        queue_wait_time = max(0.0, worker_execution_start_time - created_timestamp)
+
+        try:
+            # 1. Transition PENDING/QUEUED → STARTING
+            service.mark_starting(job_id)
+            await asyncio.sleep(0.1)
+
+            # 2. Transition STARTING → RUNNING
+            service.mark_running(job_id)
+
+            # 3. Retrieve chunks to embed
+            from app.document_processing.models import DocumentChunk
+            chunks = (
+                db.query(DocumentChunk)
+                .filter(DocumentChunk.document_id == job.document_id)
+                .order_by(DocumentChunk.chunk_index.asc())
+                .all()
+            )
+            if not chunks:
+                raise ValueError(f"No chunks found for document {job.document_id}. Cannot run embedding.")
+
+            total_chunks = len(chunks)
+            logger.info("ProcessingWorker: Embedding %d chunks for document %s", total_chunks, job.document_id)
+
+            # Initialize Embedding Service
+            from app.services.embeddings import EmbeddingService
+            embedding_svc = EmbeddingService()
+            batch_size = embedding_svc.settings.embedding_batch_size
+
+            all_embeddings = []
+            embedding_start_time = time.time()
+
+            # Process in batches
+            for i in range(0, total_chunks, batch_size):
+                # Support cancellation check
+                db.refresh(job)
+                if job.status == JobStatus.CANCELLED:
+                    logger.info("ProcessingWorker: Embedding job %s cancelled", job_id)
+                    return
+
+                batch_chunks = chunks[i : i + batch_size]
+                batch_texts = [c.chunk_text for c in batch_chunks]
+
+                current_batch_num = i // batch_size + 1
+                total_batches = math.ceil(total_chunks / batch_size)
+                
+                service.update_progress(
+                    job_id=job_id,
+                    percentage=int((i / total_chunks) * 90),
+                    current_step=f"Generating Embeddings (Batch {current_batch_num} of {total_batches})",
+                )
+
+                # Thread-safe batch embedding execution in executor thread pool
+                loop = asyncio.get_running_loop()
+                batch_vectors = await loop.run_in_executor(
+                    None,
+                    embedding_svc.embed_batch,
+                    batch_texts,
+                )
+
+                for idx, vector in enumerate(batch_vectors):
+                    chunk = batch_chunks[idx]
+                    all_embeddings.append({
+                        "chunk_id": chunk.id,
+                        "vector": vector,
+                    })
+
+            embedding_duration = time.time() - embedding_start_time
+
+            # 4. Save results to DB
+            service.update_progress(job_id, percentage=95, current_step="Saving Embeddings")
+            db_save_start_time = time.time()
+
+            # Safely replace old embeddings inside transaction
+            db.query(DocumentEmbedding).filter(DocumentEmbedding.document_id == job.document_id).delete()
+
+            for item in all_embeddings:
+                doc_embedding = DocumentEmbedding(
+                    document_id=job.document_id,
+                    chunk_id=item["chunk_id"],
+                    embedding_vector=item["vector"],
+                    embedding_dimension=embedding_svc.dimension,
+                    embedding_model=embedding_svc.model_name,
+                    embedding_version=embedding_svc.version,
+                )
+                db.add(doc_embedding)
+
+            db.commit()
+            db_save_duration = time.time() - db_save_start_time
+
+            # 5. Complete job
+            service.mark_completed(job_id)
+            worker_execution_time = time.time() - worker_execution_start_time
+
+            # Save metrics
+            self._save_embedding_performance_metrics(
+                db=db,
+                job=job,
+                queue_wait_time=queue_wait_time,
+                worker_execution_time=worker_execution_time,
+                embedding_duration=embedding_duration,
+                db_save_duration=db_save_duration,
+            )
+
+            # Auto-trigger vector database synchronization job after embedding generation completes successfully
+            try:
+                logger.info("ProcessingWorker: Auto-triggering Qdrant vector sync job for document %s", job.document_id)
+                from app.services.vector_sync import VectorSyncService
+                sync_svc = VectorSyncService(db, self._queue)
+                await sync_svc.create_sync_job(
+                    user_id=job.user_id,
+                    document_id=job.document_id,
+                    priority=job.priority.value if hasattr(job.priority, "value") else str(job.priority),
+                )
+            except Exception as e:
+                logger.error("ProcessingWorker: Failed to auto-trigger vector sync job for document %s: %s", job.document_id, str(e))
+
+            logger.info("ProcessingWorker: Embedding job %s completed successfully", job_id)
+
+        except Exception as exc:
+            logger.error("ProcessingWorker: Embedding job %s failed: %s", job_id, str(exc), exc_info=True)
+            raise exc
+
+    def _save_embedding_performance_metrics(
+        self,
+        db: Session,
+        job: ProcessingJob,
+        queue_wait_time: float,
+        worker_execution_time: float,
+        embedding_duration: float,
+        db_save_duration: float,
+    ):
+        from app.models import AnalyticsRecord
+        metrics = {
+            "queue_wait_time": queue_wait_time,
+            "worker_execution_time": worker_execution_time,
+            "embedding_duration": embedding_duration,
+            "database_save_duration": db_save_duration,
+            "total_processing_duration": queue_wait_time + worker_execution_time,
+        }
+        for key, val in metrics.items():
+            record = AnalyticsRecord(
+                metric_name=key,
+                metric_value=float(val),
+                metric_unit="seconds",
+                category="document_embedding",
+                user_id=job.user_id,
+                case_id=job.case_id,
+                metadata_json=json.dumps({
+                    "job_id": str(job.id),
+                    "document_id": str(job.document_id),
+                    "job_type": job.job_type.value,
+                })
+            )
+            db.add(record)
+        db.commit()
+
+    async def _run_vector_sync_pipeline(self, service: ProcessingService, job: ProcessingJob) -> None:
+        """Synchronizes generated embeddings for a document to Qdrant vector database."""
+        job_id = job.id
+        db = service.db
+        worker_execution_start_time = time.time()
+        created_timestamp = job.created_at.timestamp()
+        queue_wait_time = max(0.0, worker_execution_start_time - created_timestamp)
+
+        try:
+            # 1. Transition PENDING/QUEUED → STARTING
+            service.mark_starting(job_id)
+            await asyncio.sleep(0.1)
+
+            # 2. Transition STARTING → RUNNING
+            service.mark_running(job_id)
+
+            # 3. Synchronize vector embeddings
+            from app.services.vector_sync import VectorSyncService
+            sync_svc = VectorSyncService(db, self._queue)
+            
+            def progress_callback(percentage: int):
+                service.update_progress(
+                    job_id=job_id,
+                    percentage=percentage,
+                    current_step=f"Uploading Vector Batches ({percentage}%)",
+                )
+
+            await sync_svc.sync_document_vectors(
+                job_id=job_id,
+                document_id=job.document_id,
+                progress_callback=progress_callback,
+            )
+
+            # 4. Transition RUNNING → COMPLETED
+            service.mark_completed(job_id)
+            worker_execution_time = time.time() - worker_execution_start_time
+
+            # Save metrics
+            self._save_sync_performance_metrics(
+                db=db,
+                job=job,
+                queue_wait_time=queue_wait_time,
+                worker_execution_time=worker_execution_time,
+            )
+
+            logger.info("ProcessingWorker: Vector sync job %s completed successfully", job_id)
+
+        except Exception as exc:
+            logger.error("ProcessingWorker: Vector sync job %s failed: %s", job_id, str(exc), exc_info=True)
+            raise exc
+
+    def _save_sync_performance_metrics(
+        self,
+        db: Session,
+        job: ProcessingJob,
+        queue_wait_time: float,
+        worker_execution_time: float,
+    ):
+        from app.models import AnalyticsRecord
+        metrics = {
+            "queue_wait_time": queue_wait_time,
+            "worker_execution_time": worker_execution_time,
+            "total_processing_duration": queue_wait_time + worker_execution_time,
+        }
+        for key, val in metrics.items():
+            record = AnalyticsRecord(
+                metric_name=key,
+                metric_value=float(val),
+                metric_unit="seconds",
+                category="vector_synchronization",
+                user_id=job.user_id,
+                case_id=job.case_id,
+                metadata_json=json.dumps({
+                    "job_id": str(job.id),
+                    "document_id": str(job.document_id),
+                    "job_type": job.job_type.value,
+                })
+            )
+            db.add(record)
+        db.commit()
+
+
 
 
 # ---------------------------------------------------------------------------

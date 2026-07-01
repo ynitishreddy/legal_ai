@@ -455,4 +455,34 @@ from app.schemas.processing_dashboard import (
     ProcessingDashboardStatsResponse,
 )
 
+from app.schemas.embeddings import (
+    EmbeddingJobResponse,
+    EmbeddingJobListResponse,
+    EmbeddingStatsResponse,
+    DocumentEmbeddingStatusResponse,
+    ReembedRequest,
+)
+
+from app.schemas.vectors import (
+    VectorSyncJobResponse,
+    VectorSyncJobListResponse,
+    VectorStatsResponse,
+    VectorHealthResponse,
+    QdrantCollectionInfo,
+    DocumentSyncStatusResponse,
+    VectorSyncRequest,
+)
+
+from app.schemas.retrieval import (
+    RetrievalSearchRequest,
+    RetrievalChunkResponse,
+    ContextWindowRequest,
+    ContextWindowResponse,
+    RetrievalLogResponse,
+    RetrievalLogListResponse,
+    RetrievalStatsResponse,
+    RetrievalHealthResponse,
+    ChunkPreviewRequest,
+)
+
 

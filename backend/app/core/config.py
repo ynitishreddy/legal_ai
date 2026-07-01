@@ -36,6 +36,27 @@ class Settings(BaseSettings):
     # Phase 5.2 — OCR configuration
     tesseract_cmd: Optional[str] = None
 
+    # Phase 6.1 — Embedding configuration
+    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    embedding_dimension: int = 1024
+    embedding_batch_size: int = 16
+    embedding_max_retries: int = 3
+    embedding_worker_timeout: int = 300
+    embedding_max_queue_size: int = 1000
+    embedding_gpu_enabled: bool = True
+    embedding_model_version: str = "1.5"
+
+    # Phase 6.2 — Qdrant configuration
+    qdrant_host: str = "localhost"
+    qdrant_port: int = 6333
+    qdrant_api_key: Optional[str] = None
+    qdrant_https: bool = False
+    qdrant_collection_name: str = "chronolegal_embeddings"
+    qdrant_upload_batch_size: int = 32
+    qdrant_upload_timeout: int = 60
+    qdrant_max_retries: int = 3
+
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

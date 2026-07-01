@@ -85,6 +85,22 @@ class ProcessingService:
         self.db.add(log)
         return log
 
+    def sync_job_statuses(self, job: ProcessingJob) -> None:
+        """Updates specialized job trackers (EmbeddingJob, VectorSyncJob) when ProcessingJob status changes."""
+        if job.job_type == JobType.EMBEDDINGS:
+            from app.services.embeddings import sync_embedding_job_status
+            sync_embedding_job_status(self.db, job)
+        elif job.job_type == JobType.VECTOR_SYNC:
+            from app.services.vector_sync import VectorSyncService
+            svc = VectorSyncService(self.db)
+            svc.sync_vector_sync_job_status(
+                job_id=job.id,
+                status=job.status,
+                progress=job.progress_percentage,
+                error_message=job.error_message,
+            )
+
+
     # ── Create ───────────────────────────────────────────────────────────────
 
     async def create_job(
@@ -140,6 +156,8 @@ class ProcessingService:
         self._add_log(job, JobLogEventType.CREATED, f"Job created: type={job_type}, priority={priority}")
         self.db.commit()
         self.db.refresh(job)
+        self.sync_job_statuses(job)
+
 
         # Enqueue immediately
         await self._enqueue_job(job)
@@ -164,6 +182,7 @@ class ProcessingService:
         job.current_step = "Initializing"
         self._add_log(job, JobLogEventType.STARTED, "Worker picked up job — starting")
         self.db.commit()
+        self.sync_job_statuses(job)
         return job
 
     def mark_running(self, job_id: UUID) -> ProcessingJob:
@@ -176,6 +195,7 @@ class ProcessingService:
         job.current_step = "Processing"
         self._add_log(job, JobLogEventType.INFO, "Processing started")
         self.db.commit()
+        self.sync_job_statuses(job)
         return job
 
     def update_progress(
@@ -198,6 +218,7 @@ class ProcessingService:
             metadata=metadata,
         )
         self.db.commit()
+        self.sync_job_statuses(job)
         return job
 
     def mark_completed(self, job_id: UUID) -> ProcessingJob:
@@ -211,6 +232,7 @@ class ProcessingService:
         job.completed_at = utcnow()
         self._add_log(job, JobLogEventType.COMPLETED, "Job completed successfully")
         self.db.commit()
+        self.sync_job_statuses(job)
         logger.info("ProcessingService.mark_completed: job=%s", job_id)
         return job
 
@@ -230,6 +252,7 @@ class ProcessingService:
             metadata={"error_detail": error_detail} if error_detail else None,
         )
         self.db.commit()
+        self.sync_job_statuses(job)
         logger.warning("ProcessingService.mark_failed: job=%s error=%s", job_id, error_message)
         return job
 
@@ -249,6 +272,7 @@ class ProcessingService:
         job.completed_at = utcnow()
         self._add_log(job, JobLogEventType.CANCELLED, "Job cancelled by user")
         self.db.commit()
+        self.sync_job_statuses(job)
         logger.info("ProcessingService.cancel_job: job=%s user=%s", job_id, user_id)
         return job
 
@@ -286,7 +310,8 @@ class ProcessingService:
             f"Retry #{job.retry_count} of {job.max_retries} — re-queuing job",
         )
         self.db.commit()
-
+        from app.services.embeddings import sync_embedding_job_status
+        sync_embedding_job_status(self.db, job)
         await self.queue.retry(job.id)
         logger.info("ProcessingService.retry_job: job=%s retry=%d/%d", job_id, job.retry_count, job.max_retries)
         return job
