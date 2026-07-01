@@ -166,6 +166,13 @@ class ProcessingWorker:
                 job.id, job.job_type.value, job.document_id,
             )
             await self._process_job(service, job)
+            
+            # Post-job analytics snapshot update
+            try:
+                from app.services.analytics import AnalyticsService
+                AnalyticsService(db).refresh_snapshots(case_id=job.case_id)
+            except Exception as ae:
+                logger.error("ProcessingWorker: failed to update analytics cache: %s", ae)
 
         except Exception as exc:  # pylint: disable=broad-except
             logger.error(

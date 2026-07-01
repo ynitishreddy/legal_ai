@@ -184,6 +184,14 @@ class RAGService:
 
         self.db.commit()
         self.db.refresh(assistant_msg)
+
+        # Update analytics snapshot
+        try:
+            from app.services.analytics import AnalyticsService
+            AnalyticsService(self.db).refresh_snapshots(case_id=case_id)
+        except Exception as ae:
+            logger.error("RAGService: failed to refresh analytics on query: %s", ae)
+
         return assistant_msg
 
     def stream_rag(
@@ -363,6 +371,13 @@ class RAGService:
             session.title = question[:40] + "..." if len(question) > 40 else question
 
         self.db.commit()
+
+        # Update analytics snapshot
+        try:
+            from app.services.analytics import AnalyticsService
+            AnalyticsService(self.db).refresh_snapshots(case_id=case_id)
+        except Exception as ae:
+            logger.error("RAGService: failed to refresh analytics on stream query: %s", ae)
 
         # Send terminal SSE payload with metadata
         yield {"event": "done", "data": json.dumps({

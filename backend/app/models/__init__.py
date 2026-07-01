@@ -691,4 +691,22 @@ class EntityRelationship(Base):
     confidence_breakdown: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
 
 
+class AnalyticsSnapshot(Base):
+    __tablename__ = "analytics_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    data_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, index=True
+    )
+
+    case: Mapped["Case | None"] = relationship("Case")
+
+
+
 
