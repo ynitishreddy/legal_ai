@@ -1,6 +1,24 @@
 from fastapi import APIRouter
 
-from app.api.routes import analytics, auth, cases, chat, dashboard, documents, processing, timeline, users, document_cleaning, document_chunking, embeddings, vectors, retrieval, intelligence, summary
+from app.api.routes import (
+    analytics,
+    auth,
+    cases,
+    chat,
+    dashboard,
+    documents,
+    processing,
+    timeline,
+    users,
+    document_cleaning,
+    document_chunking,
+    embeddings,
+    vectors,
+    retrieval,
+    intelligence,
+    summary,
+    reasoning,
+)
 
 api_router = APIRouter(prefix="/api")
 
@@ -20,6 +38,8 @@ api_router.include_router(vectors.router)
 api_router.include_router(retrieval.router)
 api_router.include_router(intelligence.router)
 api_router.include_router(summary.router, prefix="/summary", tags=["summary"])
+api_router.include_router(reasoning.router)
+
 
 
 

@@ -711,6 +711,17 @@ class AnalyticsSnapshot(Base):
 # Phase 10 — Summarization Models
 from app.models.summary import Summary, SummaryVersion, SummaryCitation, SummaryCache, SummaryGenerationJob
 
+# Phase 11 — Legal Reasoning Models
+from app.models.reasoning import (
+    ResearchSession,
+    ResearchNote,
+    QAHistory,
+    ReasoningMetric,
+    ContradictionReport,
+    EvidenceRanking,
+)
+
+
 
 
 

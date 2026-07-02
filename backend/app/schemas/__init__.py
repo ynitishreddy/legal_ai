@@ -530,5 +530,25 @@ from app.schemas.intelligence import (
     ExtractionTriggerRequest,
 )
 
+from app.schemas.reasoning import (
+    LegalQARequest,
+    LegalQAResponse,
+    QueryClassificationResponse,
+    EvidenceItem,
+    EvidenceRankingResponse,
+    CitationItem,
+    CitationRankingResponse,
+    ContradictionItem,
+    ContradictionReportResponse,
+    ComparisonRequest,
+    ComparisonResponse,
+    ResearchSessionCreate,
+    ResearchNoteCreate,
+    ResearchNoteResponse,
+    ResearchSessionResponse,
+    QAAnalyticsResponse,
+)
+
+
 
 
